@@ -3,7 +3,7 @@ import { Box, Grid, VStack, Text, Button, Progress, Heading } from '@chakra-ui/r
 import { keyframes } from '@emotion/react';
 import CodeEditor from './CodeEditor';
 import { Problem } from '../types/problem';
-import { problems } from '../data/problems';
+import { generateProblem } from '../utils/problemGenerator';
 
 const popIn = keyframes`
   0% { transform: scale(0.3); opacity: 0; }
@@ -111,9 +111,8 @@ const BattleField: React.FC<BattleFieldProps> = ({
   };
 
   const calculateEnemyHP = () => {
-    const category = getCharacterCategory(playerCharacter);
-    const categoryProblems = problems.filter(p => p.category === category);
-    return categoryProblems.length * 10;
+    // 各難易度で5問ずつ、合計15問を想定
+    return 150;
   };
 
   const initialPlayerHP = getCharacterInitialHP(playerCharacter);
@@ -129,6 +128,7 @@ const BattleField: React.FC<BattleFieldProps> = ({
   const [solvedProblems, setSolvedProblems] = useState<string[]>([]);
   const [playerDamaged, setPlayerDamaged] = useState(false);
   const [enemyDamaged, setEnemyDamaged] = useState(false);
+  const [currentDifficulty, setCurrentDifficulty] = useState<'easy' | 'medium' | 'hard'>('easy');
 
   const enemy: Character = {
     name: 'チャレンジャー',
@@ -156,21 +156,23 @@ const BattleField: React.FC<BattleFieldProps> = ({
     handleProblemSolve(selectedChoice?.isCorrect || false);
   };
 
-  const setNextProblem = () => {
+  const setNextProblem = async () => {
+    setShowNextButton(false);
+    setCurrentProblem(null);
     const category = getCharacterCategory(playerCharacter);
-    const availableProblems = problems.filter(p => 
-      p.category === category && 
-      !solvedProblems.includes(p.id)
-    );
 
-    if (availableProblems.length > 0) {
-      const randomProblem = availableProblems[Math.floor(Math.random() * availableProblems.length)];
-      setCurrentProblem(randomProblem);
-      setShowNextButton(false);
-    } else {
-      // 全問題解答済み
-      setIsGameCleared(true);
-      onVictory();
+    try {
+      console.log('問題を生成中...');
+      const generatedProblem = await generateProblem(currentDifficulty, category);
+      console.log('生成された問題:', generatedProblem);
+
+      if (generatedProblem) {
+        setCurrentProblem(generatedProblem);
+      } else {
+        console.error('問題の生成に失敗しました');
+      }
+    } catch (error) {
+      console.error('問題の生成中にエラーが発生しました:', error);
     }
   };
 
@@ -199,6 +201,13 @@ const BattleField: React.FC<BattleFieldProps> = ({
       // 正解の場合は敵にダメージ
       if (currentProblem) {
         setSolvedProblems([...solvedProblems, currentProblem.id]);
+        
+        // 正解したら次の難易度に上げる
+        if (currentDifficulty === 'easy') {
+          setCurrentDifficulty('medium');
+        } else if (currentDifficulty === 'medium') {
+          setCurrentDifficulty('hard');
+        }
       }
       const damage = 10;
       const newEnemyHP = Math.max(0, enemyHP - damage);
@@ -479,4 +488,4 @@ const BattleField: React.FC<BattleFieldProps> = ({
   );
 };
 
-export default BattleField; 
+export default BattleField;
