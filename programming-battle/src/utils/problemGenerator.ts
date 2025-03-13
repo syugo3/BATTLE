@@ -3,6 +3,7 @@ import { Problem } from '../types/problem';
 
 // Gemini APIの初期化
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+console.log('APIキーの確認:', API_KEY ? 'セットされています' : 'セットされていません');
 
 // APIクライアントの設定
 const genAI = new GoogleGenerativeAI(API_KEY);
@@ -95,49 +96,108 @@ export const generateProblem = async (difficulty: 'easy' | 'medium' | 'hard', ca
     console.log('Gemini APIを使用して問題を生成中...');
     
     // モデルの取得
-    const model = genAI.getGenerativeModel({ 
-      model: 'gemini-pro',
-      generationConfig: {
-        temperature: 0.7,
-        topP: 0.8,
-        topK: 40,
-      }
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash"
     });
     
     // プロンプトの生成
     const prompt = generatePrompt(difficulty, category || 'プログラミング基礎');
     console.log('送信するプロンプト:', prompt);
 
-    // コンテンツの生成
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    
-    console.log('生成されたレスポンス:', text);
-    
-    // JSONをパース
-    const generatedData = JSON.parse(text);
-    
-    // Problem型に変換
-    const problem: Problem = {
-      id: `generated-${Date.now()}`,
-      title: generatedData.title,
-      description: generatedData.description,
-      choices: generatedData.choices,
-      explanation: generatedData.explanation,
-      difficulty: difficulty,
-      category: generatedData.category,
-      points: generatedData.points
-    };
-    
-    // バリデーション
-    if (!problem.title || !problem.description || !problem.choices || 
-        !problem.explanation || !problem.difficulty || 
-        !Array.isArray(problem.choices) || problem.choices.length !== 4) {
-      throw new Error('生成された問題が不完全です');
+    try {
+      // チャットモードで実行
+      const chat = model.startChat();
+      const result = await chat.sendMessage(prompt);
+      
+      if (!result.response) {
+        throw new Error('APIからの応答が空です');
+      }
+
+      const text = result.response.text();
+      console.log('生成されたレスポンス:', text);
+      
+      try {
+        // マークダウン記号を削除してからJSONをパース
+        let cleanText = text;
+        
+        // マークダウンのコードブロック記号を削除
+        if (cleanText.startsWith('```json')) {
+          cleanText = cleanText.replace(/^```json\n/, '');
+        }
+        if (cleanText.endsWith('```')) {
+          cleanText = cleanText.replace(/```$/, '');
+        }
+        
+        console.log('クリーニング前のテキスト:', cleanText);
+
+        // 改行とスペースを正規化
+        cleanText = cleanText.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ');
+
+        try {
+          // 文字列を整形
+          cleanText = cleanText
+            // 余分な引用符を削除
+            .replace(/"{2,}/g, '"')
+            // バックスラッシュの数を正規化
+            .replace(/\\{2,}/g, '\\')
+            // コードブロックのマークダウン記法を削除
+            .replace(/```[a-z]*|```/g, '')
+            // 末尾の余分なスペースを削除
+            .trim();
+
+          // 最後の閉じ括弧の後の余分なテキストを削除
+          const lastBraceIndex = cleanText.lastIndexOf('}');
+          if (lastBraceIndex !== -1) {
+            cleanText = cleanText.substring(0, lastBraceIndex + 1);
+          }
+
+          console.log('整形後のテキスト:', cleanText);
+
+          // JSONとしてパース
+          const generatedData = JSON.parse(cleanText);
+
+          // Problem型に変換
+          const problem: Problem = {
+            id: `generated-${Date.now()}`,
+            title: generatedData.title || '',
+            description: (generatedData.description || '').trim(),
+            choices: Array.isArray(generatedData.choices) 
+              ? generatedData.choices.map((choice: any, index: number) => ({
+                  id: choice.id || (index + 1).toString(),
+                  text: (choice.text || '').trim(),
+                  isCorrect: Boolean(choice.isCorrect)
+                }))
+              : [],
+            explanation: (generatedData.explanation || '').trim(),
+            difficulty: difficulty,
+            category: generatedData.category || category || 'プログラミング基礎',
+            points: Number(generatedData.points) || 
+              (difficulty === 'easy' ? 20 : difficulty === 'medium' ? 30 : 40)
+          };
+          
+          // バリデーション
+          if (!problem.title || !problem.description || !problem.choices || 
+              !problem.explanation || !problem.difficulty || 
+              !Array.isArray(problem.choices) || problem.choices.length !== 4) {
+            console.error('不完全な問題データ:', problem);
+            throw new Error('生成された問題が不完全です');
+          }
+          
+          return problem;
+          
+        } catch (parseError) {
+          console.error('パースエラーの詳細:', parseError);
+          console.error('パース対象のテキスト:', cleanText);
+          throw new Error('レスポンスの解析に失敗しました');
+        }
+      } catch (apiError) {
+        console.error('API呼び出し中のエラー:', apiError);
+        throw apiError;
+      }
+    } catch (error) {
+      console.error('問題生成中にエラーが発生しました:', error);
+      throw error;
     }
-    
-    return problem;
   } catch (error) {
     console.error('問題生成中にエラーが発生しました:', error);
     throw error;
