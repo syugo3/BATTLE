@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Grid, VStack, Text, Button, Progress, Heading } from '@chakra-ui/react';
 import { keyframes } from '@emotion/react';
-import CodeEditor from './CodeEditor';
-import { Problem } from '../types/problem';
+import type { Problem, ProblemDifficulty } from '../types/problem';
 import { generateProblem } from '../utils/problemGenerator';
+import CodeEditor from './CodeEditor';
 
 const popIn = keyframes`
   0% { transform: scale(0.3); opacity: 0; }
@@ -122,13 +122,14 @@ const BattleField: React.FC<BattleFieldProps> = ({
   const [enemyHP, setEnemyHP] = useState(initialEnemyHP);
   const [currentProblem, setCurrentProblem] = useState<Problem | null>(null);
   const [isBattleStarted, setIsBattleStarted] = useState(false);
-  const [showNextButton, setShowNextButton] = useState(false);
   const [isGameCleared, setIsGameCleared] = useState(false);
   const [isGameOver, setIsGameOver] = useState(false);
-  const [solvedProblems, setSolvedProblems] = useState<string[]>([]);
   const [playerDamaged, setPlayerDamaged] = useState(false);
   const [enemyDamaged, setEnemyDamaged] = useState(false);
-  const [currentDifficulty, setCurrentDifficulty] = useState<'easy' | 'medium' | 'hard'>('easy');
+  const [currentDifficulty, setCurrentDifficulty] = useState<ProblemDifficulty>('easy');
+  const [nextProblem, setNextProblem] = useState<Problem | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const enemy: Character = {
     name: 'チャレンジャー',
@@ -144,40 +145,91 @@ const BattleField: React.FC<BattleFieldProps> = ({
     skills: getCharacterSkills(playerCharacter),
   };
 
-  const handleStartBattle = () => {
+  const handleStartBattle = async () => {
     setIsBattleStarted(true);
-    setNextProblem();
+    await handleNextProblem();
   };
 
-  const handleCodeSubmit = (selectedChoiceId: string) => {
+  const handleCodeSubmit = async (selectedChoiceId: string) => {
     if (!currentProblem) return;
 
     const selectedChoice = currentProblem.choices.find(c => c.id === selectedChoiceId);
-    handleProblemSolve(selectedChoice?.isCorrect || false);
-  };
+    if (!selectedChoice) return;
 
-  const setNextProblem = async () => {
-    setShowNextButton(false);
-    setCurrentProblem(null);
-    const category = getCharacterCategory(playerCharacter);
-
-    try {
-      console.log('問題を生成中...');
-      const generatedProblem = await generateProblem(currentDifficulty, category);
-      console.log('生成された問題:', generatedProblem);
-
-      if (generatedProblem) {
-        setCurrentProblem(generatedProblem);
-      } else {
-        console.error('問題の生成に失敗しました');
+    if (selectedChoice.isCorrect) {
+      // 正解時の処理
+      const damage = currentProblem.points;
+      const newEnemyHP = Math.max(0, enemyHP - damage);
+      setEnemyHP(newEnemyHP);
+      setEnemyDamaged(true);
+      
+      if (newEnemyHP <= 0) {
+        setIsGameCleared(true);
+        onVictory();
+        return;
       }
-    } catch (error) {
-      console.error('問題の生成中にエラーが発生しました:', error);
+
+      // 難易度の更新
+      if (currentDifficulty === 'easy') {
+        setCurrentDifficulty('medium');
+      } else if (currentDifficulty === 'medium') {
+        setCurrentDifficulty('hard');
+      }
+    } else {
+      // 不正解時の処理
+      const damage = 5;
+      const newPlayerHP = Math.max(0, playerHP - damage);
+      setPlayerHP(newPlayerHP);
+      setPlayerDamaged(true);
+
+      if (newPlayerHP <= 0) {
+        setIsGameOver(true);
+        onDefeat();
+        return;
+      }
+      await handleNextProblem();
     }
   };
 
-  const handleNextProblem = () => {
-    setNextProblem();
+  const prefetchNextProblem = async () => {
+    try {
+      const category = getCharacterCategory(playerCharacter);
+      const generatedProblem = await generateProblem(currentDifficulty, category);
+      if (generatedProblem) {
+        setNextProblem(generatedProblem);
+      }
+    } catch (error) {
+      console.error('次の問題の事前生成に失敗しました:', error);
+      setError('問題の読み込みに失敗しました。再試行してください。');
+    }
+  };
+
+  useEffect(() => {
+    if (currentProblem) {
+      prefetchNextProblem();
+    }
+  }, [currentProblem, currentDifficulty]);
+
+  const handleNextProblem = async () => {
+    setIsLoading(true);
+    try {
+      if (nextProblem) {
+        setCurrentProblem(nextProblem);
+        setNextProblem(null);
+        prefetchNextProblem();
+      } else {
+        const category = getCharacterCategory(playerCharacter);
+        const generatedProblem = await generateProblem(currentDifficulty, category);
+        if (generatedProblem) {
+          setCurrentProblem(generatedProblem);
+        }
+      }
+    } catch (error) {
+      console.error('問題生成中にエラーが発生しました:', error);
+      setError('問題の読み込みに失敗しました。再試行してください。');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleRetry = (continueFromCheckpoint: boolean) => {
@@ -189,48 +241,9 @@ const BattleField: React.FC<BattleFieldProps> = ({
       // 最初からやり直し
       setPlayerHP(initialPlayerHP);
       setEnemyHP(initialEnemyHP);
-      setSolvedProblems([]);
       setCurrentProblem(null);
       setIsGameOver(false);
       setIsBattleStarted(false);
-    }
-  };
-
-  const handleProblemSolve = (correct: boolean) => {
-    if (correct) {
-      // 正解の場合は敵にダメージ
-      if (currentProblem) {
-        setSolvedProblems([...solvedProblems, currentProblem.id]);
-        
-        // 正解したら次の難易度に上げる
-        if (currentDifficulty === 'easy') {
-          setCurrentDifficulty('medium');
-        } else if (currentDifficulty === 'medium') {
-          setCurrentDifficulty('hard');
-        }
-      }
-      const damage = 10;
-      const newEnemyHP = Math.max(0, enemyHP - damage);
-      setEnemyHP(newEnemyHP);
-      setEnemyDamaged(true);
-      
-      if (newEnemyHP <= 0) {
-        setIsGameCleared(true);
-        onVictory();
-        return;
-      }
-      setShowNextButton(true);
-    } else {
-      // 不正解の場合はプレイヤーにダメージ
-      const newPlayerHP = Math.max(0, playerHP - 5);
-      setPlayerHP(newPlayerHP);
-      setPlayerDamaged(true);
-      
-      if (newPlayerHP <= 0) {
-        setIsGameOver(true);
-        onDefeat();
-        return;
-      }
     }
   };
 
@@ -393,24 +406,14 @@ const BattleField: React.FC<BattleFieldProps> = ({
               </VStack>
             </Grid>
 
-            {currentProblem && !showNextButton && (
+            {currentProblem && (
               <Box width="100%" bg="white" p={4} borderRadius="md">
                 <CodeEditor
                   problem={currentProblem}
                   onSubmit={handleCodeSubmit}
+                  onNext={handleNextProblem}
+                  isLoading={isLoading}
                 />
-              </Box>
-            )}
-
-            {showNextButton && (
-              <Box mt={6} textAlign="center">
-                <Button
-                  colorScheme="blue"
-                  size="lg"
-                  onClick={handleNextProblem}
-                >
-                  次の問題へ
-                </Button>
               </Box>
             )}
           </Box>

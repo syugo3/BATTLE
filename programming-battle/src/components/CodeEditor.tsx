@@ -5,9 +5,11 @@ import { Problem } from '../types/problem';
 interface CodeEditorProps {
   problem: Problem;
   onSubmit: (selectedChoiceId: string) => void;
+  onNext: () => void;
+  isLoading?: boolean;
 }
 
-const CodeEditor: React.FC<CodeEditorProps> = ({ problem, onSubmit }) => {
+const CodeEditor: React.FC<CodeEditorProps> = ({ problem, onSubmit, onNext, isLoading }) => {
   const [selectedChoice, setSelectedChoice] = useState<string>('');
   const [showResult, setShowResult] = useState(false);
   const [isCorrect, setIsCorrect] = useState(false);
@@ -23,7 +25,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({ problem, onSubmit }) => {
     }
   }, [showResult, isCorrect, selectedChoice, onSubmit]);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!selectedChoice) return;
     
     const correct = problem.choices.find(c => c.id === selectedChoice)?.isCorrect || false;
@@ -31,14 +33,26 @@ const CodeEditor: React.FC<CodeEditorProps> = ({ problem, onSubmit }) => {
     setShowResult(true);
     
     if (!correct) {
-      // 不正解の場合のみ自動で次へ進む
-      // 正解の場合は「次の問題へ」ボタンを押すまで待機
+      // 不正解の場合は自動で次へ進む
+      await onSubmit(selectedChoice);
     }
+    // 正解の場合は結果を表示したまま待機（次へボタンを表示）
   };
 
-  const handleNext = () => {
-    setShowResult(false);
-    onSubmit(selectedChoice);
+  const handleNextClick = async () => {
+    try {
+      setShowResult(false);
+      setSelectedChoice('');
+      setIsCorrect(false);
+      await onSubmit(selectedChoice);  // 正解時の結果を送信
+      await onNext();  // 次の問題を生成
+    } catch (error) {
+      console.error('次の問題への移行中にエラーが発生しました:', error);
+      // エラーが発生しても状態はリセット
+      setShowResult(false);
+      setSelectedChoice('');
+      setIsCorrect(false);
+    }
   };
 
   return (
@@ -94,10 +108,12 @@ const CodeEditor: React.FC<CodeEditorProps> = ({ problem, onSubmit }) => {
                 </Box>
                 <Button
                   colorScheme="blue"
-                  onClick={handleNext}
+                  onClick={handleNextClick}
                   width="100%"
                   size="lg"
                   mt={2}
+                  isLoading={isLoading}
+                  loadingText="次の問題を生成中..."
                 >
                   次の問題へ
                 </Button>
