@@ -54,9 +54,9 @@ ${categoryPrompt}
 
 条件：
 1. 問題は実践的で、現実の開発で遭遇する状況を反映させてください
-2. 初心者でも理解できる平易な言葉を使用してください
-3. 選択肢は4つ用意し、正解は1つだけにしてください
-4. 説明は具体例を含めて、わかりやすく記述してください
+2. タイトルは10単語以内、問題文は3-4文で簡潔に書いてください
+3. 選択肢は4つ用意し、それぞれ1-2文の簡潔な表現にしてください
+4. 説明は最も重要なポイントのみを記述してください
 
 以下のJSONフォーマットで出力してください：
 
@@ -233,7 +233,25 @@ export const generateProblem = async (
     return problem;
 
   } catch (error) {
-    console.error('問題生成中にエラーが発生しました:', error);
-    throw error;
+    console.warn('問題生成に失敗しました:', error);
+    
+    // Problem型に厳密に従ったフォールバックオブジェクト
+    const fallbackProblem: Problem = {
+      id: `fallback_${Date.now()}`,
+      title: '基本的なプログラミング問題', // questionではなくtitle
+      description: '以下のコードの空欄に入る適切な記述を選んでください', // codeではなくdescription
+      choices: [
+        { id: 'a', text: '選択肢A', isCorrect: true },
+        { id: 'b', text: '選択肢B', isCorrect: false },
+        { id: 'c', text: '選択肢C', isCorrect: false },
+        { id: 'd', text: '選択肢D', isCorrect: false }
+      ],
+      difficulty: difficulty,
+      explanation: '基本的な説明です',
+      category: category || 'プログラミング基礎', // categoryを追加
+      points: difficulty === 'easy' ? 10 : difficulty === 'medium' ? 20 : 30
+    };
+    
+    return fallbackProblem;
   }
 }; 
